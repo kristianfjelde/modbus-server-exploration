@@ -201,28 +201,22 @@ class BreweryModbusServer:
 
         logger.info(f"Starting Modbus TCP server on {self.host}:{self.port}")
 
-        # Start server in background task
-        self.server_task = asyncio.create_task(
-            StartAsyncTcpServer(
+        # Start server - StartAsyncTcpServer should be awaited directly, not in a task
+        try:
+            await StartAsyncTcpServer(
                 context=self.context,
                 identity=identity,
                 address=(self.host, self.port),
-                allow_reuse_address=True
             )
-        )
 
-        # Give the server a moment to start
-        await asyncio.sleep(0.1)
-        logger.info("Modbus TCP server started")
+        except Exception as e:
+            logger.error(f"Failed to start server: {e}")
+            raise
 
     async def stop_server(self):
         """Stop the Modbus server"""
-        if self.server_task:
-            self.server_task.cancel()
-            try:
-                await self.server_task
-            except asyncio.CancelledError:
-                pass
+        # Since we're awaiting StartAsyncTcpServer directly,
+        # stopping is handled by KeyboardInterrupt in the main loop
         logger.info("Modbus TCP server stopped")
 
     def list_fermenters(self):
@@ -265,16 +259,50 @@ class BreweryModbusServer:
 
         return reg_map
 
+    def get_network_info(self):
+        """Get network interface information for debugging"""
+        import socket
+        import subprocess
+
+        info = {}
+
+        # Get hostname and IP
+        try:
+            hostname = socket.gethostname()
+            local_ip = socket.gethostbyname(hostname)
+            info['hostname'] = hostname
+            info['local_ip'] = local_ip
+        except Exception as e:
+            info['hostname_error'] = str(e)
+
+        # Get all network interfaces (Linux)
+        try:
+            result = subprocess.run(['hostname', '-I'], capture_output=True, text=True)
+            if result.returncode == 0:
+                info['all_ips'] = result.stdout.strip().split()
+        except Exception as e:
+            info['ip_error'] = str(e)
+
+        # Check if port 502 is in use
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
+                result = s.connect_ex(('localhost', 502))
+                info['port_502_local'] = "OPEN" if result == 0 else "CLOSED"
+        except Exception as e:
+            info['port_check_error'] = str(e)
+
+        return info
+
 
 # Simple test/demo script
-async def main():
-    """Demo the Modbus server"""
+async def simulation_task(server):
+    """Run the simulation loop"""
     import math
     import time
 
-    # Create and start server
-    server = BreweryModbusServer()
-    await server.start_server()
+    # Give server a moment to start
+    await asyncio.sleep(1)
 
     # Add some fermenters
     server.add_fermenter("FV001")
@@ -295,53 +323,71 @@ async def main():
             if name != "base_address":
                 print(f"    {name}: {addr}")
 
-    print(f"\nServer running on 0.0.0.0:502")
+    print(f"\nServer running on {server.host}:{server.port}")
     print("Configure your gateway to read these registers")
     print("Press Ctrl+C to stop\n")
 
     # Simulation loop
     start_time = time.time()
-    try:
-        while True:
-            elapsed = time.time() - start_time
+    while True:
+        elapsed = time.time() - start_time
 
-            chiller_data = {
-                'reservoir_temp': 2.0 + 0.5 * math.sin(elapsed / 60),
-                'supply_temp': 2.0 + 0.3 * math.sin(elapsed / 60),
-                'return_temp': 8.0 + 2.0 * math.sin(elapsed / 120),
-                'compressor_running': (elapsed % 180) < 120,
-                'compressor_power': 4500 if (elapsed % 180) < 120 else 0,
-                'total_heat_load': 12000 + 3000 * math.sin(elapsed / 90),
-                'setpoint': 2.0,
-                'efficiency': 85.0,
+        # Update chiller data
+        chiller_data = {
+            'reservoir_temp': 2.0 + 0.5 * math.sin(elapsed / 60),
+            'supply_temp': 2.0 + 0.3 * math.sin(elapsed / 60),
+            'return_temp': 8.0 + 2.0 * math.sin(elapsed / 120),
+            'compressor_running': (elapsed % 180) < 120,
+            'compressor_power': 4500 if (elapsed % 180) < 120 else 0,
+            'total_heat_load': 12000 + 3000 * math.sin(elapsed / 90),
+            'setpoint': 2.0,
+            'efficiency': 85.0,
+            'alarm_status': 0,
+            'system_status': 1
+        }
+        server.update_chiller_data(chiller_data)
+
+        # Update fermenter data
+        for i, fv_id in enumerate(["FV001", "FV002"]):
+            fermenter_data = {
+                'current_temp': 18.0 + i + 1.0 * math.sin(elapsed / 200 + i),
+                'setpoint': 18.0 + i,
+                'supply_temp': chiller_data['supply_temp'],
+                'return_temp': chiller_data['return_temp'] - 1.0,
+                'cooling_active': chiller_data['compressor_running'],
+                'duty_cycle': 0.75 + 0.2 * math.sin(elapsed / 150 + i),
+                'heat_load_to_chiller': 3000 + 1000 * math.sin(elapsed / 100 + i),
+                'fermentation_heat': 500 + 200 * math.sin(elapsed / 400 + i),
                 'alarm_status': 0,
-                'system_status': 1
+                'status': 1
             }
-            server.update_chiller_data(chiller_data)
+            server.update_fermenter_data(fv_id, fermenter_data)
 
-            # Update fermenter data
-            for i, fv_id in enumerate(["FV001", "FV002"]):
-                fermenter_data = {
-                    'current_temp': 18.0 + i + 1.0 * math.sin(elapsed / 200 + i),
-                    'setpoint': 18.0 + i,
-                    'supply_temp': chiller_data['supply_temp'],
-                    'return_temp': chiller_data['return_temp'] - 1.0,
-                    'cooling_active': chiller_data['compressor_running'],
-                    'duty_cycle': 0.75 + 0.2 * math.sin(elapsed / 150 + i),
-                    'heat_load_to_chiller': 3000 + 1000 * math.sin(elapsed / 100 + i),
-                    'fermentation_heat': 500 + 200 * math.sin(elapsed / 400 + i),
-                    'alarm_status': 0,
-                    'status': 1
-                }
-                server.update_fermenter_data(fv_id, fermenter_data)
+        # Print status
+        temps = [f"{fv}: {18.0 + i + 1.0 * math.sin(elapsed / 200 + i):.1f}°C"
+                 for i, fv in enumerate(["FV001", "FV002"])]
+        print(f"\rChiller: {chiller_data['reservoir_temp']:.1f}°C | {' | '.join(temps)}", end="")
 
-            # Print status
-            temps = [f"{fv}: {18.0 + i + 1.0 * math.sin(elapsed / 200 + i):.1f}°C"
-                     for i, fv in enumerate(["FV001", "FV002"])]
-            print(f"\rChiller: {chiller_data['reservoir_temp']:.1f}°C | {' | '.join(temps)}\n", flush=True)
+        await asyncio.sleep(5)
 
-            await asyncio.sleep(5)
 
+async def main():
+    """Demo the Modbus server"""
+    # Create server
+    server = BreweryModbusServer()
+
+    # Show network info for debugging
+    print("\n=== Network Information ===")
+    net_info = server.get_network_info()
+    for key, value in net_info.items():
+        print(f"{key}: {value}")
+
+    try:
+        # Run server and simulation concurrently
+        await asyncio.gather(
+            server.start_server(),
+            simulation_task(server)
+        )
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
