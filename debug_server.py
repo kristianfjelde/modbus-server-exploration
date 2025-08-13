@@ -89,13 +89,14 @@ class DebuggingModbusDeviceContext(ModbusDeviceContext):
             16: "Write Multiple Registers"
         }
 
-        fx_name = fx_names.get(fx, f"Unknown Function {fx}")
-        logger.info("=" * 60)
-        logger.info(f"📝 INCOMING WRITE REQUEST")
-        logger.info(f"   Function Code: {fx} ({fx_name})")
-        logger.info(f"   Start Address: {address}")
-        logger.info(f"   Values: {values}")
-        logger.info("=" * 60)
+        if fx > 5:
+            fx_name = fx_names.get(fx, f"Unknown Function {fx}")
+            logger.info("=" * 60)
+            logger.info(f"📝 INCOMING WRITE REQUEST")
+            logger.info(f"   Function Code: {fx} ({fx_name})")
+            logger.info(f"   Start Address: {address}")
+            logger.info(f"   Values: {values}")
+            logger.info("=" * 60)
 
         return super().setValues(fx, address, values)
 
@@ -258,6 +259,14 @@ class BreweryModbusServer:
 
         slave_context = self.context[0]
 
+        current_setpoint_raw = slave_context.getValues(3, 40001 + fermenter_index, 1)[0]
+        if current_setpoint_raw != 0 and current_setpoint_raw != int(data.get('setpoint', 0) * 10):
+            # Gateway has written a new setpoint - use it!
+            logger.info(
+                f"🎯 Gateway setpoint detected: {current_setpoint_raw} (was {int(data.get('setpoint', 0) * 10)})")
+            new_setpoint = current_setpoint_raw / 10.0
+            data['setpoint'] = new_setpoint  # Update our data to use gateway setpoint
+
         # Map data to registers
         registers = [
             int(data.get('current_temp', 0) * 10),  # +0
@@ -278,6 +287,16 @@ class BreweryModbusServer:
 
         # Also update setpoint in holding registers (writable)
         slave_context.setValues(3, 40001 + fermenter_index, [registers[1]])
+
+        current_holding_setpoint = slave_context.getValues(3, 40001 + fermenter_index, 1)[0]
+        if current_holding_setpoint == 0 or current_holding_setpoint == 20:  # Default/initial values
+            # Gateway hasn't written yet, use simulated value
+            slave_context.setValues(3, 40001 + fermenter_index, [registers[1]])
+            logger.debug(f"📝 Updated 40001 with simulated setpoint: {registers[1]}")
+        else:
+            # Gateway has written - don't overwrite!
+            logger.debug(f"✋ Preserving gateway setpoint at {40001 + fermenter_index}: {current_holding_setpoint}")
+
 
     def add_test_data(self):
         """Add test data to common register addresses"""
