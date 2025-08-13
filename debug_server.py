@@ -241,12 +241,12 @@ class BreweryModbusServer:
         if current_holding_setpoint == 0 or current_holding_setpoint == 20:  # Default/initial values
             # Gateway hasn't written yet, use simulated value
             slave_context.setValues(3, 40001, [setpoint_value])
-            logger.debug(f"📝 Updated 40001 with simulated setpoint: {setpoint_value}")
+            logger.info(f"📝 Updated 40001 with simulated setpoint: {setpoint_value}")
         else:
             # Gateway has written - don't overwrite!
-            logger.debug(f"✋ Preserving gateway setpoint at 40001: {current_holding_setpoint}")
+            logger.info(f"✋ Preserving gateway setpoint at 40001: {current_holding_setpoint}")
 
-        logger.debug(f"🌡️  Register values: 30002={setpoint_value}, 40001={slave_context.getValues(3, 40001, 1)[0]}")
+        logger.info(f"🌡️  Register values: 30002={setpoint_value}, 40001={slave_context.getValues(3, 40001, 1)[0]}")
 
     def update_fermenter_data(self, fermenter_id, data):
         """Update fermenter registers"""
@@ -292,10 +292,10 @@ class BreweryModbusServer:
         if current_holding_setpoint == 0 or current_holding_setpoint == 20:  # Default/initial values
             # Gateway hasn't written yet, use simulated value
             slave_context.setValues(3, 40001 + fermenter_index, [registers[1]])
-            logger.debug(f"📝 Updated 40001 with simulated setpoint: {registers[1]}")
+            logger.info(f"📝 Updated 40001 with simulated setpoint: {registers[1]}")
         else:
             # Gateway has written - don't overwrite!
-            logger.debug(f"✋ Preserving gateway setpoint at {40001 + fermenter_index}: {current_holding_setpoint}")
+            logger.info(f"✋ Preserving gateway setpoint at {40001 + fermenter_index}: {current_holding_setpoint}")
 
 
     def add_test_data(self):
