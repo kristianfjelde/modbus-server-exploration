@@ -211,7 +211,8 @@ class BreweryModbusServer:
             # Gateway has written a new setpoint - use it!
             logger.info(
                 f"🎯 Gateway setpoint detected: {current_setpoint_raw} (was {int(data.get('setpoint', 0) * 10)})")
-            data['setpoint'] = current_setpoint_raw  # Update our data to use gateway setpoint
+            new_setpoint = current_setpoint_raw / 10.0
+            data['setpoint'] = new_setpoint  # Update our data to use gateway setpoint
 
         # Map data to registers (temperatures scaled by 10)
         registers = {
@@ -237,7 +238,7 @@ class BreweryModbusServer:
 
         # IMPORTANT: Only update holding register 40001 if gateway hasn't written to it
         current_holding_setpoint = slave_context.getValues(3, 40001, 1)[0]
-        if current_holding_setpoint == 0:  # Default/initial values
+        if current_holding_setpoint == 0 or current_holding_setpoint == 20:  # Default/initial values
             # Gateway hasn't written yet, use simulated value
             slave_context.setValues(3, 40001, [setpoint_value])
             logger.info(f"📝 Updated 40001 with simulated setpoint: {setpoint_value}")
@@ -263,7 +264,8 @@ class BreweryModbusServer:
             # Gateway has written a new setpoint - use it!
             logger.info(
                 f"🎯 Gateway setpoint detected: {current_setpoint_raw} (was {int(data.get('setpoint', 0) * 10)})")
-            data['setpoint'] = current_setpoint_raw  # Update our data to use gateway setpoint
+            new_setpoint = current_setpoint_raw / 10.0
+            data['setpoint'] = new_setpoint  # Update our data to use gateway setpoint
 
         # Map data to registers
         registers = [
@@ -287,7 +289,7 @@ class BreweryModbusServer:
         slave_context.setValues(3, 40001 + fermenter_index, [registers[1]])
 
         current_holding_setpoint = slave_context.getValues(3, 40001 + fermenter_index, 1)[0]
-        if current_holding_setpoint == 0:  # Default/initial values
+        if current_holding_setpoint == 0 or current_holding_setpoint == 20:  # Default/initial values
             # Gateway hasn't written yet, use simulated value
             slave_context.setValues(3, 40001 + fermenter_index, [registers[1]])
             logger.info(f"📝 Updated 40001 with simulated setpoint: {registers[1]}")
