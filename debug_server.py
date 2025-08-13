@@ -204,15 +204,24 @@ class BreweryModbusServer:
         """Update chiller system registers"""
         slave_context = self.context[0]
 
+        # Check if setpoint has been written by gateway (40001)
+        current_setpoint_raw = slave_context.getValues(3, 40001, 1)[0]
+        if current_setpoint_raw != 0 and current_setpoint_raw != int(data.get('setpoint', 0) * 10):
+            # Gateway has written a new setpoint - use it!
+            logger.info(
+                f"🎯 Gateway setpoint detected: {current_setpoint_raw} (was {int(data.get('setpoint', 0) * 10)})")
+            new_setpoint = current_setpoint_raw / 10.0
+            data['setpoint'] = new_setpoint  # Update our data to use gateway setpoint
+
         # Map data to registers (temperatures scaled by 10)
         registers = {
-            self.CHILLER_BASE + 0: int(data.get('reservoir_temp', 0) * 10),
-            self.CHILLER_BASE + 1: int(data.get('supply_temp', 0) * 10),
-            self.CHILLER_BASE + 2: int(data.get('return_temp', 0) * 10),
+            self.CHILLER_BASE + 0: int(data.get('reservoir_temp', 0) * 10),  # 30001
+            self.CHILLER_BASE + 1: int(data.get('supply_temp', 0) * 10),  # 30002 - ALSO use setpoint here!
+            self.CHILLER_BASE + 2: int(data.get('return_temp', 0) * 10),  # 30003
             self.CHILLER_BASE + 3: 1 if data.get('compressor_running', False) else 0,
             self.CHILLER_BASE + 4: int(data.get('compressor_power', 0)),
             self.CHILLER_BASE + 5: int(data.get('total_heat_load', 0)),
-            self.CHILLER_BASE + 6: int(data.get('setpoint', 0) * 10),
+            self.CHILLER_BASE + 6: int(data.get('setpoint', 0) * 10),  # 30006
             self.CHILLER_BASE + 7: int(data.get('efficiency', 0) * 10),
             self.CHILLER_BASE + 8: data.get('alarm_status', 0),
             self.CHILLER_BASE + 9: data.get('system_status', 1),
@@ -222,8 +231,21 @@ class BreweryModbusServer:
         for address, value in registers.items():
             slave_context.setValues(4, address, [value])
 
-        # Also update setpoint in holding registers (writable)
-        slave_context.setValues(3, 40001, [registers[self.CHILLER_BASE + 6]])
+        # Make 30002 reflect the current setpoint (what gateway expects to see)
+        setpoint_value = int(data.get('setpoint', 0) * 10)
+        slave_context.setValues(4, 30002, [setpoint_value])
+
+        # IMPORTANT: Only update holding register 40001 if gateway hasn't written to it
+        current_holding_setpoint = slave_context.getValues(3, 40001, 1)[0]
+        if current_holding_setpoint == 0 or current_holding_setpoint == 20:  # Default/initial values
+            # Gateway hasn't written yet, use simulated value
+            slave_context.setValues(3, 40001, [setpoint_value])
+            logger.debug(f"📝 Updated 40001 with simulated setpoint: {setpoint_value}")
+        else:
+            # Gateway has written - don't overwrite!
+            logger.debug(f"✋ Preserving gateway setpoint at 40001: {current_holding_setpoint}")
+
+        logger.debug(f"🌡️  Register values: 30002={setpoint_value}, 40001={slave_context.getValues(3, 40001, 1)[0]}")
 
     def update_fermenter_data(self, fermenter_id, data):
         """Update fermenter registers"""
